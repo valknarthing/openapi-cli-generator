@@ -175,6 +175,8 @@ type Imports struct {
 	Fmt     bool
 	Strings bool
 	Time    bool
+	JSON    bool
+	YAML    bool
 }
 
 // OpenAPI describes an API
@@ -264,6 +266,8 @@ func ProcessAPI(shortName string, api *openapi3.T, moduleName string) *OpenAPI {
 			}
 
 			params := getParams(pathItem, method)
+			bodyParams := getBodyParams(operation)
+			params = append(params, bodyParams...)
 			requiredParams := getRequiredParams(params)
 			optionalParams := getOptionalParams(params)
 			short := operation.Summary
@@ -279,6 +283,16 @@ func ProcessAPI(shortName string, api *openapi3.T, moduleName string) *OpenAPI {
 			}
 
 			reqMt, reqSchema, reqExamples := getRequestInfo(operation)
+			if strings.Contains(reqMt, "json") {
+				result.Imports.JSON = true
+			}
+			if strings.Contains(reqMt, "yaml") {
+				result.Imports.YAML = true
+			}
+
+			if len(bodyParams) > 0 {
+				result.Imports.JSON = true
+			}
 
 			var examples []string
 			if len(reqExamples) > 0 {
@@ -567,11 +581,94 @@ func getParams(path *openapi3.PathItem, httpMethod string) []*Param {
 	return allParams
 }
 
+func getBodyParams(op *openapi3.Operation) []*Param {
+	if op.RequestBody == nil || op.RequestBody.Value == nil {
+		return nil
+	}
+
+	var params []*Param
+
+	for _, content := range op.RequestBody.Value.Content {
+		if content.Schema == nil || content.Schema.Value == nil {
+			continue
+		}
+
+		schema := content.Schema.Value
+		if !schema.Type.Is("object") {
+			continue
+		}
+
+		var keys []string
+		for name := range schema.Properties {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+
+		for _, name := range keys {
+			prop := schema.Properties[name]
+			if prop.Value == nil {
+				continue
+			}
+
+			if prop.Value.Extensions["x-cli-ignore"] != nil {
+				continue
+			}
+
+			t := "string"
+			tn := "\"\""
+			if prop.Value.Type != nil {
+				if prop.Value.Type.Is("boolean") {
+					t = "bool"
+					tn = "false"
+				} else if prop.Value.Type.Is("integer") {
+					t = "int64"
+					tn = "0"
+				} else if prop.Value.Type.Is("number") {
+					t = "float64"
+					tn = "0.0"
+				}
+			}
+
+			cliName := slug(name)
+			if prop.Value.Extensions[ExtName] != nil {
+				cliName = extStr(prop.Value.Extensions[ExtName])
+			}
+
+			description := prop.Value.Description
+			if prop.Value.Extensions[ExtDescription] != nil {
+				description = extStr(prop.Value.Extensions[ExtDescription])
+			}
+
+			required := false
+			for _, r := range schema.Required {
+				if r == name {
+					required = true
+					break
+				}
+			}
+
+			params = append(params, &Param{
+				Name:        name,
+				CLIName:     cliName,
+				GoName:      toGoName("param "+cliName, false),
+				Description: description,
+				In:          "body",
+				Required:    required,
+				Type:        t,
+				TypeNil:     tn,
+			})
+		}
+		break
+	}
+
+	return params
+}
+
 func getRequiredParams(allParams []*Param) []*Param {
 	required := make([]*Param, 0)
 
 	for _, param := range allParams {
-		if param.Required || param.In == "path" {
+		if (param.Required || param.In == "path") && param.In != "body" {
 			required = append(required, param)
 		}
 	}
@@ -583,7 +680,7 @@ func getOptionalParams(allParams []*Param) []*Param {
 	optional := make([]*Param, 0)
 
 	for _, param := range allParams {
-		if !param.Required && param.In != "path" {
+		if (!param.Required && param.In != "path") || param.In == "body" {
 			optional = append(optional, param)
 		}
 	}

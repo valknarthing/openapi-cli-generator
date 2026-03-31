@@ -73,3 +73,14 @@ func TestEchoSuccess(t *testing.T) {
 
 	assert.JSONEq(t, "{\"hello\": \"world\", \"q\": \"foo\", \"request-id\": \"bar\"}", string(out))
 }
+
+func TestEchoFlags(t *testing.T) {
+	// Call the precompiled executable CLI using flags for the body.
+	out, err := exec.Command("sh", "-c", "example-cli echo --hello world --foo 123 --bar --echo-query=foo --x-request-id bar").CombinedOutput()
+	if err != nil {
+		fmt.Println(string(out))
+		panic(err)
+	}
+
+	assert.JSONEq(t, "{\"hello\": \"world\", \"foo\": 123, \"bar\": true, \"q\": \"foo\", \"request-id\": \"bar\"}", string(out))
+}
