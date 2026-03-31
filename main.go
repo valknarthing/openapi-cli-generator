@@ -1,9 +1,11 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"os"
@@ -19,7 +21,67 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-//go:generate go-bindata ./templates/...
+//go:embed templates/* cli/* shorthand/* apikey/* oauth/* auth0/*
+var embeddedFS embed.FS
+
+const baseModule = "github.com/danielgtaylor/openapi-cli-generator"
+
+func getModuleName() string {
+	data, err := ioutil.ReadFile("go.mod")
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+
+	return ""
+}
+
+func writeSupportFiles(moduleName string) {
+	internalDir := "internal"
+	if err := os.MkdirAll(internalDir, 0755); err != nil {
+		panic(err)
+	}
+
+	folders := []string{"cli", "shorthand", "apikey", "oauth", "auth0"}
+
+	for _, folder := range folders {
+		err := fs.WalkDir(embeddedFS, folder, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+
+			if d.IsDir() {
+				return os.MkdirAll(path.Join(internalDir, p), 0755)
+			}
+
+			if strings.HasSuffix(p, "_test.go") {
+				return nil
+			}
+
+			data, err := embeddedFS.ReadFile(p)
+			if err != nil {
+				return err
+			}
+
+			content := string(data)
+			// Rewrite imports
+			content = strings.ReplaceAll(content, baseModule, moduleName+"/internal")
+
+			// Write file
+			return ioutil.WriteFile(path.Join(internalDir, p), []byte(content), 0644)
+		})
+
+		if err != nil {
+			panic(err)
+		}
+	}
+}
 
 // OpenAPI Extensions
 const (
@@ -64,6 +126,7 @@ type Operation struct {
 	Examples       []string
 	Hidden         bool
 	NeedsResponse  bool
+	Tags           []string
 	Waiters        []*WaiterParams
 }
 
@@ -120,6 +183,7 @@ type OpenAPI struct {
 	Name         string
 	GoName       string
 	PublicGoName string
+	ModuleName   string
 	Title        string
 	Description  string
 	Servers      []*Server
@@ -129,7 +193,7 @@ type OpenAPI struct {
 
 // ProcessAPI returns the API description to be used with the commands template
 // for a loaded and dereferenced OpenAPI 3 document.
-func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
+func ProcessAPI(shortName string, api *openapi3.T, moduleName string) *OpenAPI {
 	apiName := shortName
 	if api.Info.Extensions[ExtName] != nil {
 		apiName = extStr(api.Info.Extensions[ExtName])
@@ -144,8 +208,9 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 		Name:         apiName,
 		GoName:       toGoName(shortName, false),
 		PublicGoName: toGoName(shortName, true),
+		ModuleName:   moduleName,
 		Title:        api.Info.Title,
-		Description:  escapeString(apiDescription),
+		Description:  apiDescription,
 	}
 
 	for _, s := range api.Servers {
@@ -159,25 +224,25 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 	operationMap := make(map[string]*Operation)
 
 	var keys []string
-	for path := range api.Paths {
+	for path := range api.Paths.Map() {
 		keys = append(keys, path)
 	}
 	sort.Strings(keys)
 
 	for _, path := range keys {
-		item := api.Paths[path]
+		pathItem := api.Paths.Find(path)
 
-		if item.Extensions[ExtIgnore] != nil {
+		if pathItem.Extensions[ExtIgnore] != nil {
 			// Ignore this path.
 			continue
 		}
 
 		pathHidden := false
-		if item.Extensions[ExtHidden] != nil {
-			json.Unmarshal(item.Extensions[ExtHidden].(json.RawMessage), &pathHidden)
+		if pathItem.Extensions[ExtHidden] != nil {
+			json.Unmarshal(pathItem.Extensions[ExtHidden].(json.RawMessage), &pathHidden)
 		}
 
-		for method, operation := range item.Operations() {
+		for method, operation := range pathItem.Operations() {
 			if operation.Extensions[ExtIgnore] != nil {
 				// Ignore this operation.
 				continue
@@ -188,13 +253,17 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 				name = extStr(operation.Extensions[ExtName])
 			}
 
+			if name == "" {
+				name = method + "-" + path
+			}
+
 			var aliases []string
 			if operation.Extensions[ExtAliases] != nil {
 				// We need to decode the raw extension value into our string slice.
 				json.Unmarshal(operation.Extensions[ExtAliases].(json.RawMessage), &aliases)
 			}
 
-			params := getParams(item, method)
+			params := getParams(pathItem, method)
 			requiredParams := getRequiredParams(params)
 			optionalParams := getOptionalParams(params)
 			short := operation.Summary
@@ -248,7 +317,7 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 				description += "\n## Request Schema (" + reqMt + ")\n\n" + reqSchema
 			}
 
-			method := strings.Title(strings.ToLower(method))
+			methodTitle := strings.Title(strings.ToLower(method))
 
 			hidden := pathHidden
 			if operation.Extensions[ExtHidden] != nil {
@@ -257,7 +326,7 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 
 			returnType := "interface{}"
 		returnTypeLoop:
-			for code, ref := range operation.Responses {
+			for code, ref := range operation.Responses.Map() {
 				if num, err := strconv.Atoi(code); err != nil || num < 200 || num >= 300 {
 					// Skip invalid responses
 					continue
@@ -271,7 +340,7 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 						}
 
 						if content.Schema != nil && content.Schema.Value != nil {
-							if content.Schema.Value.Type == "object" || len(content.Schema.Value.Properties) != 0 {
+							if content.Schema.Value.Type.Is("object") || len(content.Schema.Value.Properties) != 0 {
 								returnType = "map[string]interface{}"
 								break returnTypeLoop
 							}
@@ -286,9 +355,9 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 				Use:            use,
 				Aliases:        aliases,
 				Short:          short,
-				Long:           escapeString(description),
-				Method:         method,
-				CanHaveBody:    method == "Post" || method == "Put" || method == "Patch",
+				Long:           description,
+				Method:         methodTitle,
+				CanHaveBody:    methodTitle == "Post" || methodTitle == "Put" || methodTitle == "Patch",
 				ReturnType:     returnType,
 				Path:           path,
 				AllParams:      params,
@@ -297,9 +366,12 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 				MediaType:      reqMt,
 				Examples:       examples,
 				Hidden:         hidden,
+				Tags:           operation.Tags,
 			}
 
-			operationMap[operation.OperationID] = o
+			if operation.OperationID != "" {
+				operationMap[operation.OperationID] = o
+			}
 
 			result.Operations = append(result.Operations, o)
 
@@ -391,18 +463,29 @@ func ProcessAPI(shortName string, api *openapi3.Swagger) *OpenAPI {
 }
 
 // extStr returns the string value of an OpenAPI extension stored as a JSON
-// raw message.
-func extStr(i interface{}) (decoded string) {
-	if err := json.Unmarshal(i.(json.RawMessage), &decoded); err != nil {
-		panic(err)
+// raw message or a string.
+func extStr(i interface{}) string {
+	if s, ok := i.(string); ok {
+		return s
 	}
 
-	return
+	if b, ok := i.(json.RawMessage); ok {
+		var decoded string
+		if err := json.Unmarshal(b, &decoded); err != nil {
+			panic(err)
+		}
+		return decoded
+	}
+
+	return fmt.Sprintf("%v", i)
 }
 
 func toGoName(input string, public bool) string {
 	transformed := strings.Replace(input, "-", " ", -1)
 	transformed = strings.Replace(transformed, "_", " ", -1)
+	transformed = strings.Replace(transformed, "/", " ", -1)
+	transformed = strings.Replace(transformed, "{", " ", -1)
+	transformed = strings.Replace(transformed, "}", " ", -1)
 	transformed = strings.Title(transformed)
 	transformed = strings.Replace(transformed, " ", "", -1)
 
@@ -413,15 +496,12 @@ func toGoName(input string, public bool) string {
 	return transformed
 }
 
-func escapeString(value string) string {
-	transformed := strings.Replace(value, "\n", "\\n", -1)
-	transformed = strings.Replace(transformed, "\"", "\\\"", -1)
-	return transformed
-}
-
 func slug(operationID string) string {
 	transformed := strings.ToLower(operationID)
 	transformed = strings.Replace(transformed, "_", "-", -1)
+	transformed = strings.Replace(transformed, "/", "-", -1)
+	transformed = strings.Replace(transformed, "{", "", -1)
+	transformed = strings.Replace(transformed, "}", "", -1)
 	transformed = strings.Replace(transformed, " ", "-", -1)
 	return transformed
 }
@@ -448,15 +528,14 @@ func getParams(path *openapi3.PathItem, httpMethod string) []*Param {
 		if p.Value != nil && p.Value.Extensions["x-cli-ignore"] == nil {
 			t := "string"
 			tn := "\"\""
-			if p.Value.Schema != nil && p.Value.Schema.Value != nil && p.Value.Schema.Value.Type != "" {
-				switch p.Value.Schema.Value.Type {
-				case "boolean":
+			if p.Value.Schema != nil && p.Value.Schema.Value != nil && p.Value.Schema.Value.Type != nil {
+				if p.Value.Schema.Value.Type.Is("boolean") {
 					t = "bool"
 					tn = "false"
-				case "integer":
+				} else if p.Value.Schema.Value.Type.Is("integer") {
 					t = "int64"
 					tn = "0"
-				case "number":
+				} else if p.Value.Schema.Value.Type.Is("number") {
 					t = "float64"
 					tn = "0.0"
 				}
@@ -595,15 +674,27 @@ func initCmd(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	data, _ := Asset("templates/main.tmpl")
+	moduleName := getModuleName()
+	if moduleName == "" {
+		fmt.Println("Warning: go.mod not found. Using app name as module path.")
+		moduleName = args[0]
+	}
+
+	writeSupportFiles(moduleName)
+
+	data, err := embeddedFS.ReadFile("templates/main.tmpl")
+	if err != nil {
+		panic(err)
+	}
 	tmpl, err := template.New("cli").Parse(string(data))
 	if err != nil {
 		panic(err)
 	}
 
 	templateData := map[string]string{
-		"Name":    args[0],
-		"NameEnv": strings.Replace(strings.ToUpper(args[0]), "-", "_", -1),
+		"Name":       args[0],
+		"NameEnv":    strings.Replace(strings.ToUpper(args[0]), "-", "_", -1),
+		"ModuleName": moduleName,
 	}
 
 	var sb strings.Builder
@@ -622,20 +713,28 @@ func generate(cmd *cobra.Command, args []string) {
 	}
 
 	// Load the OpenAPI document.
-	loader := openapi3.NewSwaggerLoader()
-	var swagger *openapi3.Swagger
-	swagger, err = loader.LoadSwaggerFromData(data)
+	loader := openapi3.NewLoader()
+	var swagger *openapi3.T
+	swagger, err = loader.LoadFromData(data)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	funcs := template.FuncMap{
-		"escapeStr": escapeString,
-		"slug":      slug,
-		"title":     strings.Title,
+	moduleName := getModuleName()
+	if moduleName == "" {
+		moduleName = "main"
 	}
 
-	data, _ = Asset("templates/commands.tmpl")
+	funcs := template.FuncMap{
+		"quote": strconv.Quote,
+		"slug":  slug,
+		"title": strings.Title,
+	}
+
+	data, err = embeddedFS.ReadFile("templates/commands.tmpl")
+	if err != nil {
+		panic(err)
+	}
 	tmpl, err := template.New("cli").Funcs(funcs).Parse(string(data))
 	if err != nil {
 		panic(err)
@@ -643,7 +742,7 @@ func generate(cmd *cobra.Command, args []string) {
 
 	shortName := strings.TrimSuffix(path.Base(args[0]), ".yaml")
 
-	templateData := ProcessAPI(shortName, swagger)
+	templateData := ProcessAPI(shortName, swagger, moduleName)
 
 	var sb strings.Builder
 	err = tmpl.Execute(&sb, templateData)
@@ -652,6 +751,19 @@ func generate(cmd *cobra.Command, args []string) {
 	}
 
 	writeFormattedFile(shortName+".go", []byte(sb.String()))
+
+	// Generate README.md
+	data, err = embeddedFS.ReadFile("templates/readme.tmpl")
+	if err == nil {
+		tmpl, err := template.New("readme").Funcs(funcs).Parse(string(data))
+		if err == nil {
+			var sbReadme strings.Builder
+			err = tmpl.Execute(&sbReadme, templateData)
+			if err == nil {
+				ioutil.WriteFile("README.md", []byte(sbReadme.String()), 0644)
+			}
+		}
+	}
 }
 
 func main() {

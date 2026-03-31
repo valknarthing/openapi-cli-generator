@@ -1,0 +1,83 @@
+# {{ .Title }}
+
+{{ .Description }}
+
+This is a CLI application generated from an OpenAPI specification.
+
+## Installation
+
+To install the CLI, ensure you have Go installed and run:
+
+```bash
+go install .
+```
+
+## Authentication
+
+This CLI supports multiple authentication profiles. To add a new profile, use:
+
+```bash
+{{ .Name }} auth add-profile <name> [auth-params]
+```
+
+To list available profiles:
+
+```bash
+{{ .Name }} auth list-profiles
+```
+
+To use a specific profile for a command:
+
+```bash
+{{ .Name }} --profile <name> [command]
+```
+
+## Global Flags
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--profile` | Authentication profile to use | `default` |
+| `--server-index` | Server index to use | `0` |
+| `--server` | Server URL to use (overrides server-index) | |
+| `-v`, `--verbose` | Enable verbose logging | `false` |
+
+## Commands
+
+{{ range $operation := .Operations }}
+### `{{ .Use }}`
+
+{{ .Short }}
+
+{{ if .Long -}}
+{{ .Long }}
+{{- end }}
+
+**Method**: `{{ .Method | title }}`  
+**Path**: `{{ .Path }}`
+
+#### Required Parameters
+
+{{ if .RequiredParams -}}
+| Name | Type | Description |
+| --- | --- | --- |
+{{ range .RequiredParams -}}
+| `{{ .Name }}` | `{{ .Type }}` | {{ .Description }} |
+{{ end }}
+{{- else -}}
+None.
+{{- end }}
+
+#### Optional Flags
+
+{{ if .OptionalParams -}}
+| Flag | Type | Description |
+| --- | --- | --- |
+{{ range .OptionalParams -}}
+| `--{{ .CLIName }}` | `{{ .Type }}` | {{ .Description }} |
+{{ end }}
+{{- else -}}
+None.
+{{- end }}
+
+---
+{{ end }}

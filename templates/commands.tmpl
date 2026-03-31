@@ -8,7 +8,7 @@ import (
 	{{ if .Imports.Strings }}"strings"{{ end }}
 	{{ if .Imports.Time }}"time"{{ end }}
 
-	"github.com/danielgtaylor/openapi-cli-generator/cli"
+	"{{ .ModuleName }}/internal/cli"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -19,18 +19,18 @@ import (
 {{ define "params" }}
 	{{- range .OptionalParams }}
 		{{- if eq .Type "boolean" }}
-			cmd.Flags().Bool("{{ .CLIName }}", false, "{{ .Description }}")
+			cmd.Flags().Bool({{ .CLIName | quote }}, false, {{ .Description | quote }})
 		{{- else if eq .Type "int64" }}
-			cmd.Flags().Int64("{{ .CLIName }}", 0, "{{ .Description }}")
+			cmd.Flags().Int64({{ .CLIName | quote }}, 0, {{ .Description | quote }})
 		{{- else if eq .Type "float64" }}
-			cmd.Flags().Float64("{{ .CLIName }}", 0.0, "{{ .Description }}")
+			cmd.Flags().Float64({{ .CLIName | quote }}, 0.0, {{ .Description | quote }})
 		{{- else }}
-			cmd.Flags().String("{{ .CLIName }}", "", "{{ .Description }}")
+			cmd.Flags().String({{ .CLIName | quote }}, "", {{ .Description | quote }})
 		{{- end }}
 	{{- end }}
 
 	{{- range .Waiters }}
-		cmd.Flags().Bool("wait-{{ .Waiter.CLIName }}", false, "{{ .Waiter.Short }}")
+		cmd.Flags().Bool("wait-"+{{ .Waiter.CLIName | quote }}, false, {{ .Waiter.Short | quote }})
 	{{- end }}
 
 	cli.SetCustomFlags(cmd)
@@ -50,8 +50,8 @@ func {{ $api }}Servers() []map[string]string {
 	return []map[string]string{
 		{{ range $server := .Servers }}
 			map[string]string{
-				"description": "{{ $server.Description }}",
-				"url": "{{ $server.URL }}",
+				"description": {{ $server.Description | quote }},
+				"url": {{ $server.URL | quote }},
 			},
 		{{ end }}
 	}
@@ -60,9 +60,9 @@ func {{ $api }}Servers() []map[string]string {
 {{ range $operation := .Operations }}
 	// {{ $apiPublic }}{{ .GoName }} {{ .Short }}
 	func {{ $apiPublic }}{{ .GoName }}({{ range .RequiredParams }}{{ .GoName }} string, {{ end }}params *viper.Viper{{ if .CanHaveBody }}, body string{{ end }}) (*gentleman.Response, {{ .ReturnType }}, error) {
-		handlerPath := "{{ .HandlerName }}"
+		handlerPath := {{ .HandlerName | quote }}
 		if {{ $api }}Subcommand {
-			handlerPath = "{{ $name }} " + handlerPath
+			handlerPath = {{ $name | quote }} + " " + handlerPath
 		}
 
 		server := viper.GetString("server")
@@ -70,7 +70,7 @@ func {{ $api }}Servers() []map[string]string {
 			server = {{ $api }}Servers()[viper.GetInt("server-index")]["url"]
 		}
 
-		url := server+"{{ .Path }}"
+		url := server+{{ .Path | quote }}
 
 		{{- range $i, $param := .RequiredParams }}
 			{{- if eq $param.In "path" }}
@@ -82,26 +82,26 @@ func {{ $api }}Servers() []map[string]string {
 
 		{{ range $i, $param := .RequiredParams }}
 			{{ if eq $param.In "query" }}
-				req = req.AddQuery("{{ .Name }}", {{ $param.GoName }})
+				req = req.AddQuery({{ .Name | quote }}, {{ $param.GoName }})
 			{{ else if eq $param.In "header" }}
-				req = req.AddHeader("{{ .Name }}", {{ $param.GoName }})
+				req = req.AddHeader({{ .Name | quote }}, {{ $param.GoName }})
 			{{ end }}
 		{{ end }}
 
 		{{- range .OptionalParams }}
-			{{ .GoName }} := params.Get{{ .Type | title }}("{{ .CLIName }}")
+			{{ .GoName }} := params.Get{{ .Type | title }}({{ .CLIName | quote }})
 			if {{ .GoName }} != {{ .TypeNil }} {
 				{{- if eq .In "query" }}
-					req = req.AddQuery("{{ .Name }}", fmt.Sprintf("%v", {{ .GoName }}))
+					req = req.AddQuery({{ .Name | quote }}, fmt.Sprintf("%v", {{ .GoName }}))
 				{{- else if eq .In "header" }}
-					req = req.AddHeader("{{ .Name }}", fmt.Sprintf("%v", {{ .GoName }}))
+					req = req.AddHeader({{ .Name | quote }}, fmt.Sprintf("%v", {{ .GoName }}))
 				{{- end }}
 			}
 		{{- end }}
 
 		{{ if .CanHaveBody }}
 			if body != "" {
-				req = req.AddHeader("Content-Type", "{{ .MediaType }}").BodyString(body)
+				req = req.AddHeader("Content-Type", {{ .MediaType | quote }}).BodyString(body)
 			}
 		{{ end }}
 
@@ -145,17 +145,17 @@ func {{ $api }}Servers() []map[string]string {
 			var actual interface{}
 			var match bool
 			{{ range $matcher := .Matchers }}
-				actual, err = cli.GetMatchValue(resp.Context, "{{ .Select }}", params.AllSettings(), decoded)
+				actual, err = cli.GetMatchValue(resp.Context, {{ .Select | quote }}, params.AllSettings(), decoded)
 				if err != nil {
 					return errors.Wrap(err, "Could not get matcher value")
 				}
 
-				match, err = cli.Match("{{ .Test }}", []byte({{ .Expected | printf "%q" }}), actual)
+				match, err = cli.Match({{ .Test | quote }}, []byte({{ .Expected | printf "%q" }}), actual)
 				if err != nil {
 					return errors.Wrap(err, "Watcher match failure")
 				} else if match {
 					{{ if eq .State "failure" }}
-						return errors.Errorf("Waiter cannot reach desired state because %s is %s", "{{ .Select }}", {{ .Expected | printf "%q" }})
+						return errors.Errorf("Waiter cannot reach desired state because %s is %s", {{ .Select | quote }}, {{ .Expected | printf "%q" }})
 					{{ else }}
 						break
 					{{ end }}
@@ -178,14 +178,14 @@ func {{ $api }}Register(subcommand bool) {
 
 	if subcommand {
 		root = &cobra.Command{
-			Use: "{{ $name }}",
-			Short: "{{ .Title }}",
-			Long: cli.Markdown("{{ .Description }}"),
+			Use: {{ $name | quote }},
+			Short: {{ .Title | quote }},
+			Long: cli.Markdown({{ .Description | quote }}),
 		}
 		{{ $api }}Subcommand = true
 	} else {
-		cli.Root.Short = "{{ .Title }}"
-		cli.Root.Long = cli.Markdown("{{ .Description }}")
+		cli.Root.Short = {{ .Title | quote }}
+		cli.Root.Long = cli.Markdown({{ .Description | quote }})
 	}
 
 	{{ if .Waiters }}
@@ -200,16 +200,16 @@ func {{ $api }}Register(subcommand bool) {
 			func () {
 				params := viper.New()
 				cmd := &cobra.Command{
-					Use: "{{ .Use }}",
+					Use: {{ .Use | quote }},
 					{{- if .Aliases }}
 						Aliases: []string{
 							{{- range .Aliases }}
-								"{{ . }}",
+								{{ . | quote }},
 							{{- end }}
 						},
 					{{- end }}
-					Short: "{{ .Short }}",
-					Long: cli.Markdown("{{ .Long }}"),
+					Short: {{ .Short | quote }},
+					Long: cli.Markdown({{ .Long | quote }}),
 					Args: cobra.MinimumNArgs({{ len .Operation.RequiredParams }}),
 					Run: func(cmd *cobra.Command, args []string) {
 						if err := {{ $apiPublic }}{{ .GoName }}({{ range $x, $param := .Operation.RequiredParams }}args[{{ $x }}], {{ end }}params); err != nil {
@@ -231,20 +231,20 @@ func {{ $api }}Register(subcommand bool) {
 			var examples string
 
 			{{ range $ex := .Examples }}
-				examples += "  " + cli.Root.CommandPath() + " {{ $operation.Use }} {{ $ex }}\n"
+				examples += "  " + cli.Root.CommandPath() + " " + {{ $operation.Use | quote }} + " " + {{ $ex | quote }} + "\n"
 			{{ end }}
 
 			cmd := &cobra.Command{
-				Use: "{{ .Use }}",
+				Use: {{ .Use | quote }},
 				{{- if .Aliases }}
 					Aliases: []string{
 						{{- range .Aliases }}
-							"{{ . }}",
+							{{ . | quote }},
 						{{- end }}
 					},
 				{{- end }}
-				Short: "{{ .Short }}",
-				Long: cli.Markdown("{{ .Long }}"),
+				Short: {{ .Short | quote }},
+				Long: cli.Markdown({{ .Long | quote }}),
 				{{- if .Hidden }}
 					Hidden: {{ .Hidden }},
 				{{- end }}
@@ -252,7 +252,7 @@ func {{ $api }}Register(subcommand bool) {
 				Args: cobra.MinimumNArgs({{ len .RequiredParams }}),
 				Run: func(cmd *cobra.Command, args []string) {
 					{{- if .CanHaveBody }}
-					body, err := cli.GetBody("{{ .MediaType }}", args[{{ len .RequiredParams}}:])
+					body, err := cli.GetBody({{ .MediaType | quote }}, args[{{ len .RequiredParams}}:])
 					if err != nil {
 						log.Fatal().Err(err).Msg("Unable to get body")
 					}
@@ -271,18 +271,18 @@ func {{ $api }}Register(subcommand bool) {
 						reqParams := params.AllSettings()
 
 						{{ range $i, $param := $operation.RequiredParams }}
-							reqParams["{{ $param.Name }}"] = args[{{ $i }}]
+							reqParams[{{ $param.Name | quote }}] = args[{{ $i }}]
 						{{ end }}
 
 						var actual interface{}
 					{{- end }}
 
 					{{- range .Waiters }}
-						if params.GetBool("wait-{{ .Waiter.CLIName }}") {
+						if params.GetBool("wait-"+{{ .Waiter.CLIName | quote }}) {
 							wparams := viper.New()
 
 							{{- range $x, $selector := .Args }}
-								actual, err = cli.GetMatchValue(resp.Context, "{{ $selector }}", reqParams, decoded)
+								actual, err = cli.GetMatchValue(resp.Context, {{ $selector | quote }}, reqParams, decoded)
 								if err != nil {
 									log.Fatal().Err(err).Msg("Could not get matcher value")
 								}
@@ -291,12 +291,12 @@ func {{ $api }}Register(subcommand bool) {
 							{{- end }}
 
 							{{- range $id, $selector := .Params }}
-								actual, err = cli.GetMatchValue(resp.Context, "{{ $selector }}", reqParams, decoded)
+								actual, err = cli.GetMatchValue(resp.Context, {{ $selector | quote }}, reqParams, decoded)
 								if err != nil {
 									log.Fatal().Err(err).Msg("Could not get matcher value")
 								}
 
-								wparams.Set("{{ $id }}", actual)
+								wparams.Set({{ $id | quote }}, actual)
 							{{- end }}
 
 							if err := {{ $apiPublic }}{{ .Waiter.GoName }}({{ range $x, $selector := .Args }}arg{{ $x }}, {{ end }}wparams); err != nil {

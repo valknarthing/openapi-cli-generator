@@ -83,7 +83,12 @@ func initAuth() {
 					listKeys := handler.ProfileKeys()
 
 					table := tablewriter.NewWriter(os.Stdout)
-					table.SetHeader(append([]string{fmt.Sprintf("%s Profile Name", typeName)}, listKeys...))
+					header := append([]string{fmt.Sprintf("%s Profile Name", typeName)}, listKeys...)
+					headerI := make([]interface{}, len(header))
+					for i, v := range header {
+						headerI[i] = v
+					}
+					table.Header(headerI...)
 
 					for name, p := range profiles {
 						profile := p.(map[string]interface{})
@@ -91,11 +96,11 @@ func initAuth() {
 							continue
 						}
 
-						row := []string{name}
+						row := []interface{}{name}
 						for _, key := range listKeys {
 							row = append(row, profile[strings.Replace(key, "-", "_", -1)].(string))
 						}
-						table.Append(row)
+						table.Append(row...)
 					}
 					table.Render()
 				}
@@ -286,14 +291,19 @@ func InitCredentials(options ...func(*CredentialsFile) error) {
 			profiles := Creds.GetStringMap("profiles")
 			if profiles != nil {
 				table := tablewriter.NewWriter(os.Stdout)
-				table.SetHeader(append([]string{"Profile Name"}, Creds.listKeys...))
+				header := append([]string{"Profile Name"}, Creds.listKeys...)
+				headerI := make([]interface{}, len(header))
+				for i, v := range header {
+					headerI[i] = v
+				}
+				table.Header(headerI...)
 
 				for name, profile := range profiles {
-					row := []string{name}
+					row := []interface{}{name}
 					for _, key := range Creds.listKeys {
 						row = append(row, profile.(map[string]interface{})[strings.Replace(key, "-", "_", -1)].(string))
 					}
-					table.Append(row)
+					table.Append(row...)
 				}
 				table.Render()
 			} else {

@@ -2,3 +2,4 @@ vendor
 .vscode
 test
 example-cli/main.go-e
+bin/
