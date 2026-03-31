@@ -282,7 +282,7 @@ func ProcessAPI(shortName string, api *openapi3.T, moduleName string) *OpenAPI {
 				description = extStr(operation.Extensions[ExtDescription])
 			}
 
-			reqMt, reqSchema, reqExamples := getRequestInfo(operation)
+			reqMt, _, reqExamples := getRequestInfo(operation)
 			if strings.Contains(reqMt, "json") {
 				result.Imports.JSON = true
 			}
@@ -325,10 +325,6 @@ func ProcessAPI(shortName string, api *openapi3.T, moduleName string) *OpenAPI {
 
 					description += "\n" + ex.(string) + "\n"
 				}
-			}
-
-			if reqSchema != "" {
-				description += "\n## Request Schema (" + reqMt + ")\n\n" + reqSchema
 			}
 
 			methodTitle := strings.Title(strings.ToLower(method))
