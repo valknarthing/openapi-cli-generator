@@ -15,7 +15,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/danielgtaylor/openapi-cli-generator/shorthand"
+	"github.com/valknarthing/openapi-cli-generator/shorthand"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/spf13/cobra"
 	yaml "gopkg.in/yaml.v2"
@@ -24,7 +24,7 @@ import (
 //go:embed templates/* cli/* shorthand/* apikey/* oauth/* auth0/*
 var embeddedFS embed.FS
 
-const baseModule = "github.com/danielgtaylor/openapi-cli-generator"
+const baseModule = "github.com/valknarthing/openapi-cli-generator"
 
 func getModuleName() string {
 	data, err := ioutil.ReadFile("go.mod")

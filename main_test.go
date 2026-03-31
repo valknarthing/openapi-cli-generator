@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -56,6 +57,7 @@ func TestMain(m *testing.M) {
 	go func() {
 		server.ListenAndServe()
 	}()
+	time.Sleep(100 * time.Millisecond)
 	defer server.Shutdown(context.Background())
 
 	os.Exit(m.Run())
